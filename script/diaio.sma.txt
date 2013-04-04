@@ -1,0 +1,294 @@
+///////////////////////////////////////
+// 2006 - 2013 www.amxmodx.org		  //
+// DeathMatch Information All-In-One //
+// AlliedMods.net : wangbochiang	  //
+// 		 Twt: @benwang1991			  //
+// iMessage: benwang1209@icloud.com  //
+///////////////////////////////////////
+
+
+#include <amxmodx>
+#include <amxmisc>
+#include <fun>
+#include <csx>
+
+//checking my messy code if it unreadable
+//#pragma semicolon 1
+#pragma tabsize 0
+
+// User stats parms id
+#define STATS_KILLS             0
+#define STATS_DEATHS            1
+#define STATS_HS                2
+#define STATS_TKS               3
+#define STATS_SHOTS             4
+#define STATS_HITS              5
+#define STATS_DAMAGE            6
+
+//Basic
+new hudsync,hudsync_radar;
+
+//get_player function
+//"a" - Don't return dead players 
+//"b" - Don't return alive players 
+//"c" - Skip bots 
+//"d" - Skip real players 
+//"e" - Match with passed team 
+//"f" - Match with part of name 
+//"g" - Ignore case sensitivity 
+new players[32],playercount,i,player;
+
+//KillStreak
+new kills[32],hskill[32],killstreakrecord[32];
+
+//StatsX
+new score,izStats[8],izBody[8],iRankPos, iRankMax,Float:fAcc;
+
+//ScreenFade
+new msgScreenFade;
+
+//Time
+new timestring[31];
+
+//Nextmap
+new nextmap[32],amx_nextmap;
+
+//Frags Per Minute
+new alivetime[33],Float:fpm;
+
+//Leader
+new leader_frags  = 0,leader_deaths = 0,player_frags,player_deaths,leadername[32],leader = -1;
+
+//Cvar list
+new enable,leadminplayer,killaddhp,max_frags;
+
+public plugin_init() 
+{
+	register_plugin("DM Info AIO","0.1a","wangbochiang");
+	
+	//register cvar
+	enable = register_cvar("diaio_enable","1");
+	leadminplayer = register_cvar( "diaio_minlead", "4"); 
+	killaddhp = register_cvar("diaio_addhealth", "20");
+	max_frags = register_cvar("diaio_maxfrags", "100");
+	
+	//start all the important thing
+	set_task(0.2,"all_in_one_stats", 0, "", 0, "b");
+	set_task(0.3,"radar_info", 0, "", 0, "b");
+
+	//normal kills
+	register_event("DeathMsg","DeathMsg_event", "a");
+	//headshot kills
+	register_event("DeathMsg" , "DeathHS" , "a" , "1>0" , "3=1" );
+	//I use this for player Spawn event.
+	register_event("ResetHUD", "ResetHUD", "b");
+	
+	amx_nextmap = get_cvar_pointer("amx_nextmap");
+	
+	//Very Important.
+	msgScreenFade = get_user_msgid("ScreenFade");
+	hudsync = CreateHudSyncObj();
+	hudsync_radar = CreateHudSyncObj();
+}
+
+public client_putinserver(id) 
+{ 
+	if(get_pcvar_num(enable) != 1)
+	{
+		kills[id] = 0; 
+		hskill[id] = 0;
+		killstreakrecord[id] = 0;
+	}
+	return PLUGIN_CONTINUE;
+} 
+
+public client_disconnect(id)
+{
+	kills[id] = 0;
+	hskill[id] = 0;
+	killstreakrecord[id] = 0;
+	return PLUGIN_CONTINUE;
+}
+
+public ResetHUD(id)
+{
+	kills[id] = 0;
+	return PLUGIN_CONTINUE;
+}
+
+public DeathHS()
+{
+	new hsklr; hsklr = read_data( 1 );
+	new hsvic; hsvic = read_data( 2 );
+
+	if ( !is_user_bot(hsklr) && hsklr != hsvic /* kill via world */ )
+	{
+		hskill[hsklr] += 1;
+	} 
+	return PLUGIN_CONTINUE;
+}
+
+public DeathMsg_event() 
+{
+	
+	new minleadplayers = get_playersnum(0);
+	if (minleadplayers < get_pcvar_num(leadminplayer)) donothing();
+	minleadplayers = get_playersnum(1);
+	leader = -1;
+	
+	//check killstreak part.
+	new killer = read_data(1);
+	new victim = read_data(2);
+	if(killer != victim && !is_user_bot(killer))
+	{
+		kills[killer] += 1;
+		kills[victim] = 0;
+		
+		if (kills[killer] > killstreakrecord[killer]) 
+		{
+			screenfade(killer,255,0,0,25);
+			killstreakrecord[killer] = kills[killer]; 
+		}
+		else
+		{
+			screenfade(killer,0,255,0,25);
+			set_user_health(killer, get_user_health(killer) + get_pcvar_num(killaddhp));
+			//Just is case if player have hp over 100.
+			if(get_user_health(killer) >= 100) set_user_health(killer, 100);
+		}
+	}
+	//after someone dead, I decide to check who is the leader now.
+	checklead(killer);
+	
+	//max frags reached will change nextmap
+	if((leader_frags + 1)>= get_pcvar_num(max_frags)) server_cmd("amx_map %s",nextmap);
+	
+	return PLUGIN_CONTINUE;
+}
+
+//Leader Checking
+public checklead(id)
+{
+	//Leader Checking Section
+	player_frags  = get_user_frags(id);
+	player_deaths = get_user_deaths(id);
+	
+	//most painful checking part.
+	if ((get_user_frags(id) > leader_frags) || ((player_frags == leader_frags) && (player_deaths < leader_deaths) && !is_user_bot(id)))
+	{
+		leader_frags  = player_frags + 1;
+		leader_deaths = player_deaths + 1;
+		leader        = id;
+	}
+	
+	//Finally decide whe is the leader.
+	if (leader != -1) get_user_name(leader, leadername, charsmax(leadername)); 
+}
+
+
+//Radar Place
+public radar_info()
+{
+	//preset hud message
+	set_hudmessage( 0, 255, 0, 0.01, 0.01, 0, 6.0, 1.0, 0.1, 1.2, -1 );
+	
+	//detect nextmap
+	get_pcvar_string(amx_nextmap,nextmap,31);
+	
+	//Statsx.
+	fAcc = accuracy(izStats);
+	
+	//get thetime.
+	get_time("%H:%M:%S",timestring,8);
+	
+	get_players(players, playercount, "c");
+	for (i=0; i<playercount; i++) 
+	{
+		player = players[i]
+		
+		//Timeleft
+		new timeleft = get_timeleft();
+			
+		//Frags per minute callOut
+		find_fpm();
+			
+		//do this NO LEADER HUD
+		ShowSyncHudMsg(player,hudsync_radar,"Time: %s | %d:%02d ^nNextMap: %s ^nFragsLeader: %s (%d/%d) ^nAcc: %0.2f%% ^nFPM: %0.2f",timestring,timeleft / 60, timeleft % 60,nextmap,leadername,leader_frags,get_pcvar_num(max_frags),fAcc,fpm);
+	}
+}
+
+
+//Health bar
+public all_in_one_stats()
+{	
+	get_players(players,playercount,"bc");
+	for (i =0; i<=playercount; i++)
+	{
+		//Rank
+		iRankPos = get_user_stats(players[i], izStats, izBody);
+		iRankMax = get_statsnum();
+	
+		//Basic infomation 
+		new hp = get_user_health(players[i]),kill = izStats[STATS_KILLS],deaths = izStats[STATS_DEATHS],headshot = izStats[STATS_HS];
+		
+		//Basic SkillPoint Calc Output
+		score = calcscore(izStats);
+		
+		//Fix HP Bug
+		if(get_user_health(players[i]) < 0) hp = 0;
+		
+		set_hudmessage( 0, 255, 0, 0.01, 0.95, 0, 6.0, 1.0, 0.1, 1.2, -1 );
+		ShowSyncHudMsg(players[i],hudsync,"HP: %d KillStreak: %d  KS Record: %d HeadShot: %d^nRank %d / %d SkillPoint: %d (K:%d D:%d H:%d)",hp,kills[players[i]],killstreakrecord[players[i]],hskill[players[i]],iRankPos,iRankMax,score,kill,deaths,headshot);
+	}
+}
+
+
+//Frags Per Minute, rewritten via: http://aladoine.free.fr/addons/amxmodx/scripting/beta/fpm.sma
+public find_fpm() 
+{
+	get_players(players,playercount,"ac");
+	for(new i = 0; i < playercount; ++i)
+	{ 
+		++alivetime[players[i]];
+		fpm = get_user_frags(players[i]) * 60 / float(alivetime[players[i]]);
+	}
+	return PLUGIN_CONTINUE;
+}
+
+//Statsx Accuracy
+Float:accuracy(izStats[8])
+{
+	if (!izStats[STATS_SHOTS])
+		return (0.0);
+	
+	return (100.0 * float(izStats[STATS_HITS]) / float(izStats[STATS_SHOTS]));
+}
+
+//Very Basic SkillPoint Calc via StatsX
+calcscore(izStats[8])
+{
+	new kill = izStats[STATS_KILLS],hs = izStats[STATS_HS],death = izStats[STATS_DEATHS];
+	return (hs * 2 + kill - death);
+}
+
+//Just in case I have to return PLUGIN_CONTINUE twise.
+donothing() return PLUGIN_CONTINUE;
+
+//When Player break KillStreak Record
+stock screenfade(id,red,green,blue,ammount)
+{
+	if(ammount>255)ammount=255;
+	if(red>255)red=255;
+	if(green>255)green=255;
+	if(blue>255)blue=255;
+    //FADE OUT
+    message_begin(MSG_ONE_UNRELIABLE, msgScreenFade, {0,0,0}, id);
+    write_short(ammount * 100);    //Durration
+    write_short(0);        //Hold
+    write_short(0);        //Type
+    write_byte(red);    //R
+    write_byte(green);    //G
+    write_byte(blue);   //B
+    write_byte(ammount);    //B
+    message_end();
+}  
