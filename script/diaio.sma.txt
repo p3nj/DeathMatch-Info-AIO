@@ -174,7 +174,7 @@ public checklead(id)
 	player_deaths = get_user_deaths(id);
 	
 	//most painful checking part.
-	if ((get_user_frags(id) > leader_frags) || ((player_frags == leader_frags) && (player_deaths < leader_deaths) && !is_user_bot(id)))
+	if ((get_user_frags(id) > leader_frags) || ((player_frags == leader_frags) && (player_deaths < leader_deaths)) && !is_user_bot(id))
 	{
 		leader_frags  = player_frags + 1;
 		leader_deaths = player_deaths + 1;
